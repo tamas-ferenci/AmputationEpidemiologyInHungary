@@ -1,0 +1,285 @@
+---
+author: "Ferenci Tamás, Kováts Tamás, Kolossváry Endre"
+date: '`r format(Sys.time(), "%Y\\. %B %d\\.")`'
+output: pdf_document
+classoption: titlepage
+params:
+  county: "Budapest"
+title: "Megyei helyzetkép az amputációk epidemiológiájáról"
+subtitle: "`r params$county`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( echo = FALSE, fig.height = 3.8, cache = TRUE, dev = "cairo_pdf" )
+options( knitr.kable.NA = "-", digits = 3 )
+library( data.table )
+library( Hmisc )
+library( rgdal )
+PopPyramid <- readRDS( "PopPyramidReport.dat" )
+RawDataStd <- readRDS( "RawDataStdReport.dat" )
+RawDataCruralFemoral <- readRDS( "RawDataCruralFemoral.dat" )
+RawDataPrimer <- readRDS( "RawDataPrimer.dat" )
+RawDataBetegKuldFogad <- readRDS( "RawDataBetegKuldFogad.dat" )
+RawDataSurv <- readRDS( "RawDataSurv.dat" )
+RawDataRes <- readRDS( "RawDataRes.dat" )
+TerkepLAU1 <- readRDS( "TerkepLAU1.dat" )
+TerkepNUTS3 <- readRDS( "TerkepNUTS3.dat" )
+toplot <- c( "Major amputáció", "Minor amputáció", "Vaszkuláris intervenció", "Vaszkuláris operáció", "Revaszkularizáció",
+             "Carotis intervenció", "Carotis operáció", "AMI PCI-vel" )
+```
+
+# Demográfiai jellemzők
+
+A megye nemi- és korösszetételének alakulása (folytonos vonal) az országos adattal összevetésben (szaggatott vonal):
+
+```{r}
+agelabs <- c( "<10", "10-20", "20-30", "30-40", "40-50", "50-60", "60-70", "70-80", ">80" )
+xYplot( POPULATION*100 ~ YEAR|SEX,
+        data = PopPyramid[ GEO%in%c( "Total", params$county ),
+                           .( POPULATION = sum( POPULATION ) ),
+                           .( GEO, YEAR, SEX, AGE = cut( AGE, c( -Inf, seq( 10, 80, 10 ), Inf ), labels = agelabs ) ) ][
+                             , .( AGE, POPULATION = POPULATION/sum( POPULATION ) ) , .( GEO, YEAR, SEX ) ],
+        horizontal = FALSE, stack = TRUE, groups = interaction( AGE, GEO ),
+        par.settings = list( superpose.line = list( col = rep( colorRampPalette( c( "green", "red" ) )( length( agelabs ) ),
+                                                               length( agelabs ) ), lty = rep( c( "solid", "dashed" ), 9 ) ) ),
+        type = "b", label.curve = list( labels = c( agelabs, rep( "", length( agelabs ) ) ) ), xlab = "Év", ylab = "Arány [%]" )
+```
+
+\clearpage
+
+# Standardizált incidenciák alakulása időben
+
+```{r, results = "asis" }
+for( t in c( toplot[ 1:2 ], "Vaszkuláris intervenció és operáció", toplot[ 5:8 ] ) ) {
+  cat( "\n##", t, "\n" )
+  cat( "A standardizált incidencia alakulása az országos adattal összevetve:\n\n" )
+  if( t!="Vaszkuláris intervenció és operáció" ) {
+    temp <- droplevels( RawDataStd[ TYPEname==t&GEO%in%c( params$county, "Országos" ) ] )
+    print( xYplot( Cbind( adj.rate, lci, uci ) ~ YEAR, groups = GEO, data = temp, ylim = extendrange( c( temp$lci, temp$uci ) ),
+                   type = "l", xlab = "Év", ylab = "Standardizált incidencia (ESP 2013)", label.curves = FALSE,
+                   auto.key = list( columns = 2, points = FALSE, lines = TRUE  ) ) )
+    cat( "\n\n" )
+    cat( "Az incidenciák számszerűen (/100 ezer fő/év):")
+    print( knitr::kable( dcast( YEAR ~ GEO, data = temp, value.var = c( "crude.rate", "adj.rate" ) )[
+      , .( `Év` = YEAR, `Nyers - Országos` = `crude.rate_Országos`, `Nyers - Megyei` = get( paste0( "crude.rate_",
+                                                                                                    params$county ) ),
+           `Standardizált - Országos` = `adj.rate_Országos`, `Standardizált - Megyei` = get( paste0( "adj.rate_",
+                                                                                                     params$county ) ) ) ]
+    ) )
+    cat( "\n\n" )
+    cat( "\\newpage" )
+  } else {
+    temp <- droplevels( RawDataStd[ TYPEname%in%c( toplot[ 3:4 ] )&GEO%in%c( params$county, "Országos" ) ] )
+    print( xYplot( Cbind( adj.rate, lci, uci ) ~ YEAR, groups = interaction( GEO, TYPEname, lex.order = TRUE, sep = " - " ),
+                   data = temp, ylim = extendrange( c( temp$lci, temp$uci ) ), type = "l", xlab = "Év",
+                   ylab = "Standardizált incidencia (ESP 2013)", label.curves = FALSE,
+                   auto.key = list( columns = 1, points = FALSE, lines = TRUE ),
+                   par.settings = list( superpose.line = list( col = rep( trellis.par.get()$superpose.line$col[ 1:2 ],
+                                                                          each = 2 ), lty = rep( c( "solid", "dashed" ), 2 ) )
+                   ) ) )
+    cat( "\n\n" )
+    cat( "Az incidenciák számszerűen, vaszkuláris intervenció (/100 ezer fő/év):")
+    print( knitr::kable( dcast( YEAR ~ GEO, data = temp[ TYPEname=="Vaszkuláris intervenció" ],
+                                value.var = c( "crude.rate", "adj.rate" )
+    )[ , .( `Év` = YEAR, `Nyers - Országos` = `crude.rate_Országos`,
+            `Nyers - Megyei` = get( paste0( "crude.rate_", params$county ) ),
+            `Standardizált - Országos` = `adj.rate_Országos`,
+            `Standardizált - Megyei` = get( paste0( "adj.rate_", params$county ) ) ) ] ) )
+    cat( "\n\n" )
+    cat( "Az incidenciák számszerűen, vaszkuláris operáció (/100 ezer fő/év):")
+    print( knitr::kable( dcast( YEAR ~ GEO, data = temp[ TYPEname=="Vaszkuláris operáció" ],
+                                value.var = c( "crude.rate", "adj.rate" )
+    )[ , .( `Év` = YEAR, `Nyers - Országos` = `crude.rate_Országos`,
+            `Nyers - Megyei` = get( paste0( "crude.rate_", params$county ) ),
+            `Standardizált - Országos` = `adj.rate_Országos`,
+            `Standardizált - Megyei` = get( paste0( "adj.rate_", params$county ) ) ) ] ) )
+    cat( "\n\n" )
+    cat( "\\newpage" )
+  }
+}
+```
+
+\clearpage
+
+# Crurális/femorális arány alakulása időben
+
+```{r}
+xYplot( Cbind( est, ci1, ci2 ) ~ YEAR, groups = relevel( as.factor( GEO ), ref = "Országos" ), type = "b",
+        data = RawDataCruralFemoral[ GEO%in%c( "Országos", params$county ) ], xlab = "Év",
+        ylab = "Crurális amputációk aránya [%]" )
+```
+
+\clearpage
+
+# Primer amputációs ráta (major amputációk) alakulása az időben
+
+```{r}
+xYplot( Cbind( est, ci1, ci2 ) ~ YEAR, groups = relevel( as.factor( GEO ), ref = "Országos" ), type = "b",
+        xlab = "Év", ylab = "Primer amputációs ráta [%]", data = RawDataPrimer[ GEO%in%c( "Országos", params$county ) ] )
+```
+
+\clearpage
+
+# Standardizált incidenciák a járási szinten (2015-2017)
+
+```{r, results = "asis", fig.height = 8 }
+ps <- lapply( toplot, function( t ) {
+  mtemp <- merge( TerkepLAU1, RawDataStdLAU1[ TYPEname==t&NUTS3==params$county, .( NAME = LAU1, adj.rate ) ] )
+  mtemp <- mtemp[ !is.na( mtemp$adj.rate ), ]
+  spplot( mtemp, "adj.rate", col.regions = colorRampPalette( c( "green", "red" ) )( 1000 ), main = t,
+          sp.layout = list( "sp.polygons", TerkepNUTS3, lwd = 2, col = "black", first = FALSE ) )
+} )
+do.call( gridExtra::grid.arrange, list( grobs = ps, layout_matrix = matrix( 1:8, nc = 2 ) ) )
+```
+
+Az incidenciák számszerűen (/100 ezer fő/év):
+
+```{r}
+knitr::kable( RawDataStdLAU1[ TYPEname%in%toplot&NUTS3==params$county ][
+  , 1:4 ][ , .( `Típus` = TYPEname, `Járás` = LAU1, `Nyers incidencia` = crude.rate, `Standardizált incidencia` = adj.rate ) ] )
+```
+
+\clearpage
+
+# Crurális/femorális arány járási szinten (2015-2017)
+
+Crurális amputációk aránya (%):
+
+```{r}
+mtemp <- merge( TerkepLAU1, RawDataCruralFemoral[ NUTS3==params$county, .( NAME = GEO, est ) ] )
+mtemp <- mtemp[ !is.na( mtemp$est ), ]
+spplot( mtemp, "est", col.regions = colorRampPalette( c( "green", "red" ) )( 1000 ),
+        sp.layout = list( "sp.polygons", TerkepNUTS3, lwd = 2, col = "black", first = FALSE ) )
+```
+
+\clearpage
+
+# Primer amputációs ráta (major amputációk) járási szinten (2015-2017)
+
+```{r}
+mtemp <- merge( TerkepLAU1, RawDataPrimer[ NUTS3==params$county, .( NAME = GEO, est ) ] )
+mtemp <- mtemp[ !is.na( mtemp$est ), ]
+spplot( mtemp, "est", col.regions = colorRampPalette( c( "green", "red" ) )( 1000 ),
+        sp.layout = list( "sp.polygons", TerkepNUTS3, lwd = 2, col = "black", first = FALSE ) )
+```
+
+\clearpage
+
+# Betegek küldése más megyébe
+
+```{r, results="asis"}
+for( t in toplot ) {
+  cat( "\n##", t, "\n" )
+  cat( "A megyei lakhelyű betegek ellátási helyének megoszlása 2017 évben:\n\n" )
+  tab <- RawDataBetegKuldFogad[ YEAR==2017&TYPEname==t&HOMENUTS3==params$county&N!=0 ]
+  print( knitr::kable( merge( tab[ , .( DONENUTS3, N, prop.table(N)*100 ) ],
+                              tab[ DONENUTS3!=params$county, .( DONENUTS3, prop.table(N)*100 ) ], all.x = TRUE ),
+                       col.names = c( "Ellátási megye", "Betegek száma", "Arány [%]", "Küldési arány [%]" ),
+                       row.names = FALSE, digits = 1 ) )
+  cat( "\n\n" )
+  cat( "A saját megyében ellátottak arányának alakulása időben:\n\n" )
+  print( xyplot( Prop*100 ~ YEAR, data = RawDataBetegKuldFogad[ HOMENUTS3==params$county&TYPEname==t,
+                                                                .( Prop = sum( N[DONENUTS3==params$county] )/sum( N ) ),
+                                                                .( YEAR ) ],
+                 type = "b", xlab = "Év", ylab = "Saját megyében ellátottak arány [%]" ) )
+  cat( "\n\n" )
+  cat( "\\newpage" )
+}
+```
+
+\clearpage
+
+# Betegek fogadása más megyéből
+
+```{r, results="asis"}
+for( t in toplot ) {
+  cat( "\n##", t, "\n" )
+  cat( "A megyében ellátott betegek lakhelyének megoszlása 2017 évben:\n\n" )
+  tab <- RawDataBetegKuldFogad[ YEAR==2017&TYPEname==t&DONENUTS3==params$county&N!=0 ]
+  print( knitr::kable( merge( tab[ , .( HOMENUTS3, N, prop.table(N)*100 ) ],
+                              tab[ HOMENUTS3!=params$county, .( HOMENUTS3, prop.table(N)*100 ) ], all.x = TRUE ),
+                       col.names = c( "Lakhely megye", "Betegek száma", "Arány [%]", "Fogadási arány [%]" ),
+                       row.names = FALSE, digits = 1 ) )
+  cat( "\n\n" )
+}
+```
+
+\clearpage
+
+# 30 napos nyers halálozás alakulása időben
+
+```{r, results="asis", fig.height=3.7}
+for( t in c( "Minor amputáció", "Cruralis amputáció", "Femorális amputáció", "Major amputáció" ) ) {
+  cat( "\n##", t, "\n" )
+  cat( "30 napos nyers halálozási ráták:\n\n" )
+  print( xYplot( Cbind( 100-surv*100, 100-lower*100, 100-upper*100 ) ~ YEAR,
+                 groups = relevel( as.factor( GEO ), ref = "Országos" ),
+                 data = RawDataSurv[ TYPEname==t&GEO%in%c( "Országos", params$county ) ], type = "l",
+                 xlab = "Év", ylab = "Nyers halálozás [%]",
+                 ylim = extendrange( c( 100-RawDataSurv[ TYPEname==t&GEO%in%c( "Országos", params$county ) ]$lower*100,
+                                        100-RawDataSurv[ TYPEname==t&GEO%in%c( "Országos", params$county ) ]$upper*100 ) ) ) )
+  cat( "\n\n" )
+}
+```
+
+\clearpage
+
+# Függelék: megyei kor- és nemspecifikus incidenciák
+
+```{r, results = "asis" }
+for( t in toplot ) {
+  cat( "\n##", t, "\n" )
+  cat( "Kor- és nemspecifikus incidenciáinak alakulása a megyében:\n\n" )
+  print( xYplot( Inc ~ YEAR | SEX, groups = AGE, data = RawDataRes[ TYPEname==t&GEO==params$county ], type = "l", xlab = "Év",
+                 ylab = "Incidencia [/100 ezer fő/év]" ) )
+  cat('\n\n')
+  print( xYplot( Cbind( est, ci1, ci2 ) ~ AGE | SEX, groups = YEAR,
+                 data = rbind( RawDataRes[ TYPEname==t&GEO==params$county, .( AGE, SEX, est = Inc, ci1 = NA, ci2 = NA, YEAR ) ],
+                               RawDataRes[ TYPEname==t&GEO==params$county ][ , c( as.list( with(
+                                 binom.test( sum( N ), round( sum( POPULATION ) ) ),
+                                 c( est = unname( estimate )*1e5, ci = conf.int*1e5 ) ) ), YEAR = Inf ), .( AGE, SEX ) ] ),
+                 type = "l", xlab = "Év", ylab = "Incidencia [/100 ezer fő/év]", label.curves = FALSE,
+                 col = c( rep( "lightblue", 14 ), "red" ), lwd = c( rep( 1, 14 ), 2 ) ) )
+  cat('\n\n')
+  cat( "Összevetve ezt az országos adatokkal:\n\n")
+  print( xYplot( Inc ~ YEAR | as.factor( AGE ), groups = GEOSEX,
+                 data = droplevels( RawDataRes[ TYPEname==t&GEO%in%c( params$county, "Országos" ) ] ), type = "l",
+                 auto.key = list( columns = 2 , points = FALSE, lines = TRUE ), label.curves = FALSE,
+                 par.settings = list( superpose.line = list( col = rep( trellis.par.get()$superpose.line$col, each = 2 ),
+                                                             lty = rep( c( "solid", "dashed" ), 2 ) ) ), xlab = "Év",
+                 ylab = "Incidencia [/100 ezer fő/év]", as.table = TRUE ) )
+  cat( "\n\n" )
+}
+```
+
+\clearpage
+
+# Függelék: részletes járási incidencia adatok
+
+```{r, results = "asis" }
+for( l in sort( unique( RawDataRes[ NUTS3==county ]$GEO ) ) ) {
+  cat( "\n##", l, "\n" )
+  for( t in toplot ) {
+    cat( "\n###", t, "\n" )
+    cat( "Kor- és nemspecifikus incidenciáinak alakulása a járásban:\n\n" )
+    print( xYplot( Inc ~ YEAR | SEX, groups = AGE, data = RawDataRes[ TYPEname==t&GEO==l ], type = "l", xlab = "Év",
+                   ylab = "Incidencia [/100 ezer fő/év]" ) )
+    cat('\n\n')
+    cat( "Összevetve ezt az országos és megyei adatokkal:\n\n")
+    print( xYplot( Inc ~ YEAR | as.factor( AGE ), groups = GEOSEX,
+                   data = droplevels( RawDataRes[ TYPEname==t&GEO%in%c( l, params$county, "Országos" ) ] ), type = "l",
+                   auto.key = list( columns = 2 , points = FALSE, lines = TRUE ), label.curves=  FALSE,
+                   par.settings = list( superpose.line = list( col = rep( trellis.par.get()$superpose.line$col, each = 3 ),
+                                                               lty = rep( c( "solid", "dashed", "dotted" ), 3 ) ) ), xlab = "Év",
+                   ylab = "Incidencia [/100 ezer fő/év]", as.table = TRUE ) )
+    cat( "\n\n" )
+    cat( "A standardizált incidencia alakulása az országos és megyei adattal összevetve:\n\n" )
+    temp <- droplevels( RawDataStd[ TYPEname==t&GEO%in%c( l, params$county, "Országos" ) ] )
+    print( xYplot( Cbind( adj.rate*1e5, lci*1e5, uci*1e5 ) ~ YEAR, groups = GEO, data = temp,
+                   ylim = extendrange( c( temp$lci*1e5, temp$uci*1e5 ) ), type = "l", xlab = "Év",
+                   ylab = "Standardizált incidencia (ESP 2013)", label.curves = FALSE,
+                   auto.key = list( columns = 3, points = FALSE, lines = TRUE  ) ) )
+    cat( "\n\n" )
+  } 
+}
+```
